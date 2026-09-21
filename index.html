@@ -129,15 +129,14 @@ vec3 hueShift(vec3 c, float h){
   return c*ca + cross(k, c)*sin(h * 6.2831853) + k*dot(k, c)*(1.0 - ca);
 }
 
-// 向上翻涌的湍流火舌（原创密度场）
+// 向上翻涌的湍流火焰海：海平面随噪声起伏（原创密度场）
 float flameDensity(vec3 p, float gt){
-  vec3 q = vec3(p.x, p.y - gt * 0.85, p.z);
-  float n = fbm(q * 1.25 + vec3(0.0, -gt * 0.12, 0.0));
-  float rad = length(p.xz) * (1.0 + 0.45 * (n - 0.5));
-  float body   = smoothstep(1.25, 0.12, rad);
-  float top    = smoothstep(1.9, -0.3, p.y + 0.8 * (n - 0.5));
-  float bottom = smoothstep(-1.5, -0.5, p.y);
-  return clamp(body * top * bottom * 1.35, 0.0, 1.0);
+  vec3 q = vec3(p.x, p.y - gt * 0.8, p.z);
+  float n = fbm(q * 1.1);
+  float level = 0.15 + 0.9 * (n - 0.5);                 // 起伏的海平面
+  float sea  = smoothstep(level + 0.55, level - 0.45, p.y);
+  float fade = smoothstep(-1.6, -0.4, p.y);
+  return clamp(sea * (0.4 + 0.6 * n) * 1.25 * fade, 0.0, 1.0);
 }
 
 vec4 map(vec3 p, vec3 ro, float gt){
@@ -154,9 +153,9 @@ vec4 map(vec3 p, vec3 ro, float gt){
   float dLine = length(r - (ro + th * ab));
   den *= uCorridor + (1.0 - uCorridor) * smoothstep(0.6, 1.9, dLine);
 
-  vec3 col = 1.15 * mix(C_INDIGO, C_CREAM, den);
+  vec3 col = 1.15 * mix(CARD_INDIGO, CARD_CREAM, den);
   col += 0.04 * sin(0.6 * p.yzx + gt);
-  col = mix(C_CORAL, col, clamp((r.y + 0.6) / 1.8, 0.0, 1.0));
+  col = mix(CARD_CORAL, col, clamp((r.y + 0.6) / 1.8, 0.0, 1.0));
   return vec4(col, den);
 }
 
@@ -181,7 +180,7 @@ void main(){
 
   // 相机：环绕 + 可升降（与 JS 侧 syncCamera 完全同步）
   float an = -0.07 * iTime + 3.0 * uMoX;
-  vec3 ro = vec3(cos(an) * 4.2, 1.6 + uCamY, sin(an) * 4.2);
+  vec3 ro = vec3(cos(an) * 4.2, 2.4 + uCamY, sin(an) * 4.2);
   vec3 ta = vec3(0.0, 0.4, 0.0);
   vec3 ww = normalize(ta - ro);
   vec3 uu = normalize(cross(vec3(0.0, 1.0, 0.0), ww));
@@ -230,7 +229,14 @@ window.addEventListener('error', e => fail('JS错误: ' + e.message));
 window.addEventListener('unhandledrejection', e => fail('Promise错误: ' + e.reason));
 canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); fail('WebGL上下文丢失'); });
 canvas.addEventListener('webglcontextrestored', () => fail('WebGL上下文已恢复'));
-window.__dbg = { frames: 0, lastErr: '', console: [] };
+window.__dbg = { frames: 0, lastErr: '', console: [], ready: false };
+{
+  const origErr = console.error.bind(console);
+  console.error = (...a) => {
+    window.__dbg.console.push(a.map(x => (typeof x === 'string' ? x : String(x))).join(' ').slice(0, 400));
+    origErr(...a);
+  };
+}
 
 let renderer;
 try {
@@ -304,6 +310,7 @@ function pickPillow(cx, cy) {
 new GLTFLoader().load('assets/newbed.glb',
   (gltf) => {
     const bed = gltf.scene;
+    bed.rotation.x = -Math.PI / 2; // 模型原始朝向沿 +Y 站立：放倒 90° 使床面朝上
     const box = new THREE.Box3().setFromObject(bed);
     const size = box.getSize(new THREE.Vector3());
     const s = 1.75 / Math.max(size.x, size.y, size.z);
@@ -365,8 +372,9 @@ flameScene.add(flameTri);
 // ---- 交互：拖拽调整视角（松手保持角度，缓慢漂移继续）；单击枕头漂浮 / 单击火焰换色相 ----
 let dragging = false;
 let downCX = 0, downCY = 0, lastCY = 0;
-let camY = 0;      // 垂直拖拽的相机升降量
+let camY = 1.4;      // 垂直拖拽的相机升降量（默认略抬高俯瞰平放的床）
 let viewMoX = 0;   // 拖拽后的视角方位分量（0..1，松手保持）
+window.__getPivot = () => bedPivot ? {rx:+bedPivot.rotation.x.toFixed(3), ry:+bedPivot.rotation.y.toFixed(3), rz:+bedPivot.rotation.z.toFixed(3), y:+bedPivot.position.y.toFixed(2)} : null;
 canvas.addEventListener('pointerdown', e => {
   dragging = true;
   try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
@@ -419,7 +427,7 @@ const _ro = new THREE.Vector3(), _ww = new THREE.Vector3(), _uu = new THREE.Vect
       _vv = new THREE.Vector3(), _ta = new THREE.Vector3(0, 0.4, 0);
 function syncCamera(t, moX) {
   const an = -0.07 * t + 3.0 * moX;
-  _ro.set(Math.cos(an) * 4.2, 1.6 + camY, Math.sin(an) * 4.2);
+  _ro.set(Math.cos(an) * 4.2, 2.4 + camY, Math.sin(an) * 4.2);
   _ww.copy(_ta).sub(_ro).normalize();
   _uu.set(0, 1, 0).cross(_ww).normalize();
   _vv.copy(_ww).cross(_uu);
@@ -554,12 +562,13 @@ function frame(now) {
   syncCamera(t, viewMoX);
 
   // 床的不规则翻转：多个不成谐波关系的正弦叠加
+  // 床平放模式：四脚着地水平悬浮，仅绕竖轴缓慢旋转 + 轻微摇摆与浮沉（本地修改）
   if (bedPivot) {
     const ts = t * FX.tumbleSpeed;
-    bedPivot.rotation.y = ts * 0.10 + 0.5 * Math.sin(ts * 0.043);
-    bedPivot.rotation.x = FX.tumbleAmp * (0.45 * Math.sin(ts * 0.171 + 1.2) + 0.18 * Math.sin(ts * 0.071));
-    bedPivot.rotation.z = FX.tumbleAmp * (0.30 * Math.sin(ts * 0.117 + 0.5) + 0.12 * Math.sin(ts * 0.049 + 2.0));
-    bedPivot.position.y = FX.bedHeight + 0.12 * Math.sin(ts * 0.19);
+    bedPivot.rotation.y = ts * 0.12;
+    bedPivot.rotation.x = FX.tumbleAmp * 0.10 * Math.sin(ts * 0.171 + 1.2);
+    bedPivot.rotation.z = FX.tumbleAmp * 0.06 * Math.sin(ts * 0.117 + 0.5);
+    bedPivot.position.y = FX.bedHeight + 0.10 * Math.sin(ts * 0.19);
   }
 
   // 枕头漂浮动画：指数平滑趋近目标高度，漂浮时叠加轻微浮动
@@ -582,6 +591,7 @@ function frame(now) {
   renderer.render(flameScene, dummyCam);
 
   frames++;
+  window.__dbg.frames = frames;
   if (now - lastHud > 500) {
     const fps = Math.round(frames * 1000 / (now - lastHud));
     frames = 0; lastHud = now;
@@ -591,6 +601,17 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+window.__step = frame; // 手动渲染单帧（后台标签页 RAF 可能被节流）
+window.__dbg.ready = true; // 模块执行完成标志
+window.__dbg.g = () => ({ renderer, sceneBase, cam, rt, flameScene, dummyCam });
+window.__dbg.readPixel = (x, y) => {
+  const gl = renderer.getContext();
+  const dpr = canvas.width / canvas.clientWidth;
+  const px = new Uint8Array(4);
+  const yGL = canvas.height - Math.round(y * dpr);
+  gl.readPixels(Math.round(x * dpr), yGL, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  return Array.from(px);
+};
 </script>
 </body>
 </html>
