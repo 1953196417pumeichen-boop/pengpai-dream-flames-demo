@@ -95,6 +95,7 @@ uniform float uCorridor;   // 走廊薄纱密度
 uniform float uPocket;     // 床周围口袋挖空强度
 uniform float uPart;       // 拖拽拨开火焰 0..1（交互驱动）
 uniform float uHueShift;   // 色相偏移（半圈）
+uniform float uBright;     // 画面整体亮度
 
 // —— 火焰色卡（深红系，线性空间）——
 const vec3 FLAME_DEEP  = vec3(0.10, 0.010, 0.018); // 暗红（稀薄边缘）
@@ -216,9 +217,10 @@ void main(){
 
   vec3 col = marchFlames(ro, rd, bg, iTime * uChurn);
 
-  // 暗角 + 色相 + 伽马
+  // 暗角 + 亮度 + 色相 + 伽马
   float vig = smoothstep(1.4, 0.45, length(q - 0.5) * 1.35);
   col *= 0.55 + 0.45 * vig;
+  col *= uBright;
   col = hueShift(col, uHueShift);
   col = clamp(col, 0.0, 1.0);
   outColor = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);
@@ -295,7 +297,7 @@ const bgMat = new THREE.ShaderMaterial({
     uBg: { value: bgTex },
     uRes: { value: new THREE.Vector2(1, 1) },
     uImgAspect: { value: BG_IMG_W / BG_IMG_H },
-    uBrightExp: { value: 1.30 },
+    uBrightExp: { value: 0.95 },
     uBlueMul: { value: 1.55 },
     uBlueAdd: { value: 0.018 },
   },
@@ -308,12 +310,13 @@ bgQuad.frustumCulled = false;
 sceneBase.add(bgQuad);
 
 // ---- 通道一：灯光（色卡：暖光 + 靛蓝夜空环境光） ----
-sceneBase.add(new THREE.AmbientLight(0xbfd0ff, 1.2));
-sceneBase.add(new THREE.HemisphereLight(0x35418f, 0xffc9b8, 1.5));
-const warm = new THREE.PointLight(0xffc9ad, 7, 0, 2);
+// r160 物理光照点光按距离平方衰减，强度按衰减补偿保证床面受光充足
+sceneBase.add(new THREE.AmbientLight(0xbfd0ff, 1.6));
+sceneBase.add(new THREE.HemisphereLight(0x35418f, 0xffc9b8, 1.8));
+const warm = new THREE.PointLight(0xffc9ad, 22, 0, 2);
 warm.position.set(0.4, -0.3, 3.2);
 sceneBase.add(warm);
-const cool = new THREE.DirectionalLight(0x93b4ff, 2.6);
+const cool = new THREE.DirectionalLight(0x93b4ff, 3.5);
 cool.position.set(-2.5, 4, -1.5);
 sceneBase.add(cool);
 
@@ -386,9 +389,10 @@ const flameMat = new THREE.ShaderMaterial({
     uAlpha: { value: 0.40 },
     uChurn: { value: 2.0 },
     uCorridor: { value: 0.04 },
-    uPocket: { value: 0.85 },
+    uPocket: { value: 0.40 },
     uPart: { value: 0 },
     uHueShift: { value: 0 },
+    uBright: { value: 1.25 },
   },
   vertexShader: flameVert, fragmentShader: flameFrag,
   depthTest: false, depthWrite: false,
@@ -468,10 +472,10 @@ function syncCamera(t, moX) {
 
 // ---- 参数滑杆面板 ----
 const FX_DEFAULTS = {
-  alpha: 0.40, churn: 2.0, corridor: 0.04, pocket: 0.85, hue: 0,
+  alpha: 0.40, churn: 2.0, corridor: 0.04, pocket: 0.40, hue: 0,
   bedSize: 1.0, bedHeight: 0.15, tumbleAmp: 1.0, tumbleSpeed: 1.0, bedSat: 0.45, pillowFloat: 0.55,
-  bgBright: 1.30, bgBlue: 1.55, bgFloor: 0.018,
-  warmI: 5, coolI: 2.6,
+  bgBright: 0.95, bgBlue: 1.55, bgFloor: 0.018,
+  warmI: 22, coolI: 3.5, bright: 1.25,
 };
 const FX = { ...FX_DEFAULTS };
 
@@ -488,6 +492,7 @@ function applyFX(key) {
     case 'bgBright': bgMat.uniforms.uBrightExp.value = v; break;
     case 'bgBlue': bgMat.uniforms.uBlueMul.value = v; break;
     case 'bgFloor': bgMat.uniforms.uBlueAdd.value = v; break;
+    case 'bright': flameMat.uniforms.uBright.value = v; break;
     case 'warmI': warm.intensity = v; break;
     case 'coolI': cool.intensity = v; break;
     // bedHeight / tumbleAmp / tumbleSpeed 在 frame() 里实时读取
@@ -528,6 +533,7 @@ const SLIDER_DEFS = [
   ['bgBright', '背景亮度', 0.60, 1.80, 0.01],
   ['bgBlue', '背景蓝调', 0.80, 2.00, 0.01],
   ['bgFloor', '深蓝底', 0, 0.30, 0.005],
+  ['bright', '画面亮度', 0.60, 2.00, 0.01],
   ['灯光', null],
   ['warmI', '暖光强度', 0, 40, 1],
   ['coolI', '蓝光强度', 0, 6, 0.1],
